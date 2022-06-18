@@ -17,20 +17,23 @@ fn get_rel_path(root_dir: &str, full_path: &str) -> Result<String, Error> {
     Ok(rel_name.to_string_lossy().into_owned())
 }
 
-fn need_compress(fname: &str) -> bool {
-    fname.ends_with(".txt")
-        || fname.ends_with(".xml")
-        || fname.ends_with(".dds")
-        || fname.ends_with(".pmg")
-        || fname.ends_with(".set")
+fn need_compress(fname: &str, extra_ext_list: &[&str]) -> bool {
+    [".txt", ".xml", ".dds", ".pmg", ".set", ".raw"]
+        .iter()
+        .chain(extra_ext_list.iter())
+        .any(|ext| fname.ends_with(ext))
 }
 
-fn pack_file(root_dir: &str, rel_path: &str) -> Result<(FileEntry, Vec<u8>), Error> {
+fn pack_file(
+    root_dir: &str,
+    rel_path: &str,
+    need_compress: bool,
+) -> Result<(FileEntry, Vec<u8>), Error> {
     let mut stm = vec![];
     let mut fp = File::open(Path::new(root_dir).join(rel_path))?;
     fp.read_to_end(&mut stm)?;
     let original_size = stm.len();
-    let (raw_stm, flags) = if need_compress(rel_path) {
+    let (raw_stm, flags) = if need_compress {
         (compress_to_vec_zlib(&stm, 5), 1)
     } else {
         (stm, 0)
@@ -88,7 +91,12 @@ fn ceil_1024(v: u64) -> u64 {
     (v + 1023) & 0u64.wrapping_sub(1024)
 }
 
-pub fn run_pack(input_folder: &str, output_fname: &str, add_data: bool) -> Result<(), Error> {
+pub fn run_pack(
+    input_folder: &str,
+    output_fname: &str,
+    skey:&str,
+    compress_ext: Vec<&str>,
+) -> Result<(), Error> {
     let file_names: Vec<String> = WalkDir::new(input_folder)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -103,21 +111,15 @@ pub fn run_pack(input_folder: &str, output_fname: &str, add_data: bool) -> Resul
         .sum::<usize>();
 
     let final_file_name = common::get_final_file_name(output_fname)?;
-    let salted_name = final_file_name.clone() + encryption::KEY_SALT;
-    let header_off = encryption::gen_header_offset(final_file_name.as_bytes());
-    let entries_off = encryption::gen_entries_offset(final_file_name.as_bytes());
-    let header_key = encryption::gen_header_key(salted_name.as_bytes());
-    let entries_key = encryption::gen_entries_key(salted_name.as_bytes());
-
-    if add_data && final_file_name.len() > 25 {
-        return Err(Error::msg(
-            "file name too long when has --aditional-data, max is 25",
-        ));
-    }
+    let header_off = encryption::gen_header_offset(&final_file_name);
+    let entries_off = encryption::gen_entries_offset(&final_file_name);
+    let header_key = encryption::gen_header_key(&final_file_name,skey);
+    let entries_key = encryption::gen_entries_key(&final_file_name,skey);
 
     let fs = OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(true)
         .open(output_fname)?;
     let mut stm = BufWriter::new(fs);
 
@@ -126,7 +128,8 @@ pub fn run_pack(input_folder: &str, output_fname: &str, add_data: bool) -> Resul
     let mut entries = Vec::<FileEntry>::with_capacity(file_names.len());
     for name in file_names {
         let (mut ent, content) =
-            pack_file(input_folder, &name).context(format!("packing {} failed", name))?;
+            pack_file(input_folder, &name, need_compress(&name, &compress_ext))
+                .context(format!("packing {} failed", name))?;
         stm.seek(SeekFrom::Start(content_off))?;
         stm.write_all(&content)?;
         ent.offset = ((content_off - start_content_off) / 1024) as u32;
@@ -140,13 +143,6 @@ pub fn run_pack(input_folder: &str, output_fname: &str, add_data: bool) -> Resul
 
     stm.seek(SeekFrom::Start(header_off as u64))?;
     write_header(entries.len() as u32, &header_key, &mut stm).context("writing header failed")?;
-
-    if add_data {
-        stm.seek(SeekFrom::Start(0))?;
-        stm.write_u32::<LittleEndian>(common::IT_CUSTOM_MAGIC)?;
-        stm.write_u8(final_file_name.len() as u8)?;
-        stm.write_all(final_file_name.as_bytes())?;
-    }
 
     Ok(())
 }

@@ -5,8 +5,6 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-pub const IT_CUSTOM_MAGIC: u32 = 0x3ef613f9;
-
 pub struct FileHeader {
     pub checksum: u32,
     pub version: u8,
@@ -73,38 +71,12 @@ pub fn get_final_file_name(fname: &str) -> Result<String, Error> {
         .map(|s| s.to_str().expect("not a valid unicode string").to_owned())
 }
 
-pub fn check_additional_data<T>(rd: &mut T, fname: &str) -> Result<bool, Error>
-where
-    T: Read,
-{
-    let magic = rd.read_u32::<LittleEndian>()?;
-    if magic != IT_CUSTOM_MAGIC {
-        return Ok(false);
-    }
-    let flen = rd.read_u8()? as usize;
-    if flen > 25 {
-        return Ok(false);
-    }
-    let mut str_buf = [0u8; 25];
-    rd.read_exact(&mut str_buf[..flen])?;
-
-    let origin_fname = String::from_utf8_lossy(&str_buf[..flen]).to_owned();
-    if origin_fname != fname {
-        return Err(Error::msg(format!(
-            "file name not match, which should be {}",
-            origin_fname
-        )));
-    }
-    Ok(true)
-}
-
-pub fn read_header<T>(fname: &str, rd: &mut T) -> Result<FileHeader, Error>
+pub fn read_header<T>(fname: &str,skey:&str, rd: &mut T) -> Result<FileHeader, Error>
 where
     T: Read + Seek,
 {
-    let salted_name = fname.to_owned() + encryption::KEY_SALT;
-    let key = encryption::gen_header_key(salted_name.as_bytes());
-    let offset = encryption::gen_header_offset(fname.as_bytes());
+    let key = encryption::gen_header_key(fname,skey);
+    let offset = encryption::gen_header_offset(&fname);
     rd.seek(SeekFrom::Start(offset as u64))?;
     let mut dec_stream = encryption::Snow2Decoder::new(&key, rd);
     Ok(FileHeader::new(&mut dec_stream)?)
@@ -121,15 +93,15 @@ pub fn validate_header(hdr: &FileHeader) -> Result<(), Error> {
 pub fn read_entries<T>(
     fname: &str,
     header: &FileHeader,
+    skey:&str,
     rd: &mut T,
 ) -> Result<Vec<FileEntry>, Error>
 where
     T: Read + Seek,
 {
-    let salted_name = fname.to_owned() + encryption::KEY_SALT;
-    let key = encryption::gen_entries_key(salted_name.as_bytes());
-    let offset_header = encryption::gen_header_offset(fname.as_bytes());
-    let offset_entry = encryption::gen_entries_offset(fname.as_bytes());
+    let key = encryption::gen_entries_key(&fname,skey);
+    let offset_header = encryption::gen_header_offset(&fname);
+    let offset_entry = encryption::gen_entries_offset(&fname);
     //println!("header offset: {:x}", offset_header);
     //println!("entry offset: {:x}", offset_entry);
     rd.seek(SeekFrom::Start((offset_header + offset_entry) as u64))?;

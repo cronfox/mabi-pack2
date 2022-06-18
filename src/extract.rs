@@ -3,8 +3,8 @@ use crate::encryption;
 use anyhow::{Context, Error};
 use miniz_oxide::inflate::decompress_to_vec_zlib;
 use regex::Regex;
-use std::fs::{File, OpenOptions};
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
+use std::fs::{self, File};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, MAIN_SEPARATOR};
 
 fn write_file(root_dir: &str, rel_path: &str, content: Vec<u8>) -> Result<(), Error> {
@@ -13,9 +13,8 @@ fn write_file(root_dir: &str, rel_path: &str, content: Vec<u8>) -> Result<(), Er
         "unrecognized path: {}",
         fname.to_string_lossy().to_owned()
     )))?;
-    std::fs::create_dir_all(par)?;
-    let mut fs = OpenOptions::new().create(true).write(true).open(fname)?;
-    fs.write_all(&content)?;
+    fs::create_dir_all(par)?;
+    fs::write(fname, &content)?;
     Ok(())
 }
 
@@ -30,7 +29,7 @@ where
 {
     stm.seek(SeekFrom::Start(start_off + ent.offset as u64 * 1024))?;
     let mut content = vec![0u8; ent.raw_size as usize];
-    let fkey = encryption::gen_file_key(ent.name.as_bytes(), &ent.key);
+    let fkey = encryption::gen_file_key(&ent.name, &ent.key);
 
     if (ent.flags & common::FLAG_ALL_ENCRYPTED) != 0 {
         let mut dec_stm = encryption::Snow2Decoder::new(&fkey, stm);
@@ -70,19 +69,11 @@ fn make_regex(strs: Vec<&str>) -> Result<Vec<Regex>, Error> {
         .collect()
 }
 
-pub fn run_extract(
-    fname: &str,
-    output_folder: &str,
-    filters: Vec<&str>,
-    check_additional: bool,
-) -> Result<(), Error> {
+pub fn run_extract(fname: &str, output_folder: &str,skey:&str, filters: Vec<&str>) -> Result<(), Error> {
     let fp = File::open(fname)?;
     let mut rd = BufReader::new(fp);
     let final_file_name = common::get_final_file_name(fname)?;
-    if check_additional {
-        common::check_additional_data(&mut rd, &final_file_name)?;
-    }
-    let header = common::read_header(&final_file_name, &mut rd).context("reading header failed")?;
+    let header = common::read_header(&final_file_name, skey,&mut rd).context("reading header failed")?;
 
     common::validate_header(&header)?;
     if header.version != 2 {
@@ -92,7 +83,7 @@ pub fn run_extract(
         )));
     }
 
-    let entries = common::read_entries(&final_file_name, &header, &mut rd)
+    let entries = common::read_entries(&final_file_name, &header, skey,&mut rd)
         .context("reading entries failed")?;
     common::validate_entries(&entries)?;
 

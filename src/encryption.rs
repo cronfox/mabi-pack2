@@ -1,32 +1,41 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Cursor, Read, Write};
 
-pub const KEY_SALT: &str = "@6QeTuOaDgJlZcBm#9";
+//const KEY_SALT: &str = "@6QeTuOaDgJlZcBm#9";
 
-pub fn gen_header_key(input: &[u8]) -> Vec<u8> {
+pub fn gen_header_key(name: &str,skey:&str) -> Vec<u8> {
+    let input: Vec<u16> = (name.to_ascii_lowercase() + skey)
+        .encode_utf16()
+        .collect();
     (0..128)
-        .map(|i| input[i % input.len()].wrapping_add(i as u8))
+        .map(|i| input[i % input.len()].wrapping_add(i as u16) as u8)
         .collect()
 }
 
-pub fn gen_header_offset(input: &[u8]) -> usize {
+pub fn gen_header_offset(name: &str) -> usize {
+    let input: Vec<u16> = name.to_ascii_lowercase().encode_utf16().collect();
     let sum = input.iter().fold(0, |sum, c| sum + *c as usize);
     sum % 312 + 30
 }
 
-pub fn gen_entries_key(input: &[u8]) -> Vec<u8> {
+pub fn gen_entries_key(name: &str,skey:&str) -> Vec<u8> {
+    let input: Vec<u16> = (name.to_ascii_lowercase() + skey)
+        .encode_utf16()
+        .collect();
     let len = input.len();
     (0..128)
         .map(|i| (i + (i % 3 + 2) * input[len - 1 - i % len] as usize) as u8)
         .collect()
 }
 
-pub fn gen_entries_offset(input: &[u8]) -> usize {
+pub fn gen_entries_offset(name: &str) -> usize {
+    let input: Vec<u16> = name.to_ascii_lowercase().encode_utf16().collect();
     let r = input.iter().fold(0, |r, c| r + *c as usize * 3);
     r % 212 + 42
 }
 
-pub fn gen_file_key(input: &[u8], key2: &[u8]) -> Vec<u8> {
+pub fn gen_file_key(name: &str, key2: &[u8]) -> Vec<u8> {
+    let input: Vec<u16> = name.encode_utf16().collect();
     assert_eq!(key2.len(), 16);
     (0..128)
         .map(|i| {
@@ -35,9 +44,9 @@ pub fn gen_file_key(input: &[u8], key2: &[u8]) -> Vec<u8> {
                     key2[i % key2.len()]
                         .wrapping_sub(i as u8 / 5 * 5)
                         .wrapping_add(2)
-                        .wrapping_add(i as u8),
+                        .wrapping_add(i as u8) as u16,
                 )
-                .wrapping_add(i as u8)
+                .wrapping_add(i as u16) as u8
         })
         .collect()
 }
@@ -201,63 +210,5 @@ impl<'a, T: Write> Drop for Snow2Encoder<'a, T> {
     fn drop(&mut self) {
         self.end_encoding().expect("writing failed");
         self.flush().expect("flushing failed");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn header_offset() {
-        let off = gen_header_offset("data_00000.it".as_bytes());
-        assert_eq!(off, 0x6a);
-    }
-
-    #[test]
-    fn header_key() {
-        let name = "data_00000.it".to_owned() + KEY_SALT;
-        let key = gen_header_key(name.as_bytes());
-        assert_eq!(
-            key[..16],
-            [
-                0x64, 0x62, 0x76, 0x64, 0x63, 0x35, 0x36, 0x37, 0x38, 0x39, 0x38, 0x74, 0x80, 0x4d,
-                0x44, 0x60
-            ]
-        );
-    }
-
-    #[test]
-    fn entries_offset() {
-        let off = gen_entries_offset("data_00000.it".as_bytes());
-        assert_eq!(off, 0x6e);
-    }
-
-    #[test]
-    fn entries_key() {
-        let name = "data_00000.it".to_owned() + KEY_SALT;
-        let key = gen_entries_key(name.as_bytes());
-        assert_eq!(
-            key[..16],
-            [
-                0x72, 0x6a, 0xb6, 0x87, 0x2d, 0x6d, 0xde, 0xe5, 0xa4, 0x91, 0x2d, 0x47, 0xf6, 0x9,
-                0xa2, 0xb1
-            ]
-        );
-    }
-
-    #[test]
-    fn decoder() {
-        let name = "data_00000.it".to_owned() + KEY_SALT;
-        let key = gen_header_key(name.as_bytes());
-
-        let ciphered_text = [
-            0x37u8, 0x62, 0x6D, 0x63, 0x82, 0x03, 0x09, 0xD0, 0x24, 0x73, 0xBE, 0xA9,
-        ];
-        let mut cur = Cursor::new(ciphered_text);
-        let mut rd = Snow2Decoder::new(&key, &mut cur);
-        assert_eq!(rd.read_u32::<LittleEndian>().unwrap(), 0x4b5);
-        assert_eq!(rd.read_u8().unwrap(), 2);
-        assert_eq!(rd.read_u32::<LittleEndian>().unwrap(), 0x4b3);
     }
 }
