@@ -69,23 +69,32 @@ fn make_regex(strs: Vec<&str>) -> Result<Vec<Regex>, Error> {
         .collect()
 }
 
-pub fn run_extract(fname: &str, output_folder: &str,skey:&str, filters: Vec<&str>) -> Result<(), Error> {
+pub fn run_extract(fname: &str, output_folder: &str, skey: Option<&str>, filters: Vec<&str>) -> Result<(), Error> {
     let fp = File::open(fname)?;
     let mut rd = BufReader::new(fp);
     let final_file_name = common::get_final_file_name(fname)?;
-    let header = common::read_header(&final_file_name, skey,&mut rd).context("reading header failed")?;
-
-    common::validate_header(&header)?;
-    if header.version != 2 {
-        return Err(Error::msg(format!(
-            "header version {} not supported",
-            header.version
-        )));
-    }
-
-    let entries = common::read_entries(&final_file_name, &header, skey,&mut rd)
-        .context("reading entries failed")?;
-    common::validate_entries(&entries)?;
+    
+    let (header, entries, _used_key) = match skey {
+        Some(key) => {
+            let header = common::read_header(&final_file_name, key, &mut rd)
+                .context("读取头部失败")?;
+            common::validate_header(&header)?;
+            if header.version != 2 {
+                return Err(Error::msg(format!(
+                    "不支持的头部版本 {}",
+                    header.version
+                )));
+            }
+            
+            let entries = common::read_entries(&final_file_name, &header, key, &mut rd)
+                .context("读取条目失败")?;
+            common::validate_entries(&entries)?;
+            
+            (header, entries, key.to_string())
+        },
+        None => common::try_read_with_keys(&final_file_name, &mut rd)
+            .context("尝试多个密钥失败")?
+    };
 
     let cur_pos = rd.seek(SeekFrom::Current(0))?;
     let content_start_off = (cur_pos + 1023) & 0u64.wrapping_sub(1024);
@@ -95,7 +104,7 @@ pub fn run_extract(fname: &str, output_folder: &str,skey:&str, filters: Vec<&str
     for ent in entries {
         if filters.len() == 0 || filters.iter().any(|re| re.find(&ent.name).is_some()) {
             extract_file(&mut rd, content_start_off, &ent, output_folder)
-                .context(format!("extracting {} failed", ent.name))?;
+                .context(format!("提取 {} 失败", ent.name))?;
         }
     }
     Ok(())

@@ -8,8 +8,8 @@ mod pack;
 
 fn main() {
     let args = Command::new("Mabinogi pack utilities 2")
-        .version("v1.3.2")
-        .author("regomne <fallingsunz@gmail.com>")
+        .version("v1.4.0")
+        .author("original by regomne, modified by amitamabi w/ claude 3.7 and github copilot")
         .subcommand(
             Command::new("pack")
                 .about("Create a .it pack")
@@ -28,7 +28,7 @@ fn main() {
                 .about("Extract a .it pack")
                 .arg(arg!(-i --input <PACK_NAME> "Set the input pack name to extract"))
                 .arg(arg!(-o --output <FOLDER> "Set the output folder"))
-                .arg(arg!(-k --key <KEY_SALT> "Set the key for the .it file encryption"))
+                .arg(arg!(-k --key <KEY_SALT> "Set the key for the .it file encryption").required(false))
                 .arg(
                     arg!(-f --filter <FILTER> ... "Set a filter when extracting, in regexp, multiple occurrences mean OR")
                         .required(false)
@@ -40,7 +40,7 @@ fn main() {
             Command::new("list")
                 .about("Output the file list of a .it pack")
                 .arg(arg!(-i --input <PACK_NAME> "Set the input pack name to extract"))
-                .arg(arg!(-k --key <KEY_SALT> "Set the key for the .it file encryption"))
+                .arg(arg!(-k --key <KEY_SALT> "Set the key for the .it file encryption").required(false))
                 .arg(
                     arg!(-o --output <LIST_FILE_NAME> "Set the list file name, output to stdout if not set")
                         .required(false)
@@ -55,7 +55,7 @@ fn main() {
         }
         list::run_list(
             matches.value_of("input").unwrap(),
-            matches.value_of("key").unwrap(),
+            matches.value_of("key"),
             matches.value_of("output"),
         )
     } else if let Some(matches) = args.subcommand_matches("extract") {
@@ -65,7 +65,7 @@ fn main() {
         extract::run_extract(
             matches.value_of("input").unwrap(),
             matches.value_of("output").unwrap(),
-            matches.value_of("key").unwrap(),
+            matches.value_of("key"),
             matches
                 .values_of("filter")
                 .map(|e| e.collect())

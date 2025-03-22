@@ -124,3 +124,58 @@ pub fn validate_entries(entries: &[FileEntry]) -> Result<(), Error> {
     }
     Ok(())
 }
+
+pub const KEY_SALT_LIST: [&str; 10] = [
+    "3@6|3a[@<Ex:L=eN|g",
+    "CuAVPMZx:E96:(Rxdw",
+    "@6QeTuOaDgJlZcBm#9",
+    "DaXU_Vx9xy;[ycFz{1",
+    "}F33F0}_7X^;b?PM/;",
+    "C(K^x&pBEeg7A5;{G9",
+    "smh=Pdw+%?wk?m4&(y",
+    "xGqK]W+_eM5u3[8-8u",
+    "1&w2!&w{Q)Fkz4e&p0",
+    "})wWb4?-sVGHNoPKpc"
+];
+
+pub fn try_read_with_keys<T>(
+    fname: &str, 
+    rd: &mut T
+) -> Result<(FileHeader, Vec<FileEntry>, String), Error>
+where
+    T: Read + Seek,
+{
+    for &key_salt in KEY_SALT_LIST.iter() {
+        // 保存当前位置
+        let start_pos = rd.seek(SeekFrom::Start(0))?;
+        
+        // 使用闭包进行一次完整的验证流程，任何步骤失败都会继续下一个密钥
+        match (|| -> Result<(FileHeader, Vec<FileEntry>), Error> {
+            // 尝试读取头部
+            let header = read_header(fname, key_salt, rd)?;
+            validate_header(&header)?;
+            
+            if header.version != 2 {
+                return Err(Error::msg(format!("不支持的头部版本 {}", header.version)));
+            }
+            
+            // 尝试读取条目
+            let entries = read_entries(fname, &header, key_salt, rd)?;
+            validate_entries(&entries)?;
+            
+            // 只有当头部和条目都成功验证时才返回成功
+            Ok((header, entries))
+        })() {
+            Ok((header, entries)) => {
+                println!("找到匹配的密钥: {}", key_salt);
+                return Ok((header, entries, key_salt.to_string()));
+            },
+            Err(_) => {
+                // 密钥验证失败，重置位置准备尝试下一个密钥
+                rd.seek(SeekFrom::Start(start_pos))?;
+            }
+        }
+    }
+    
+    Err(Error::msg("无法找到有效的密钥盐值，请手动指定"))
+}
